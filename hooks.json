@@ -1,0 +1,11 @@
+{
+  "context-anchor": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python ./scripts/pre_invocation.py",
+        "timeout": 10
+      }
+    ]
+  }
+}

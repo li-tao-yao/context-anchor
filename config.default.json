@@ -1,0 +1,10 @@
+{
+  "auto_detect_after_turns": 6,
+  "auto_detect_recheck_turns": 6,
+  "reanchor_every_turns": 6,
+  "max_lines": 120,
+  "max_bytes": 6144,
+  "inherit_on_fork": true,
+  "fork_max_age_hours": 48,
+  "registry_max_entries": 200
+}

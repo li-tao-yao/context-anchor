@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "auto_start": True,
+    "skip_subagents": True,
     "auto_detect_after_turns": 6,
     "auto_detect_recheck_turns": 6,
     "reanchor_every_turns": 6,
@@ -41,6 +43,14 @@ DEFAULT_LEDGER_TEMPLATE = """<!-- context-anchor: overwrite-in-place | limit: <=
 - (Key workspace file paths if any, and the immediate next step.)
 """
 
+TEMPLATE_PLACEHOLDER_MARKERS = (
+    "(State the core objective and boundaries of this conversation/task.)",
+    "(Non-negotiable requirements, dimensions, tolerances, rules, style, or budget limits.)",
+    "(Latest confirmed decisions, specs, or plan. Overwrite obsolete values in place; never keep superseded versions alongside current ones.)",
+    "(Approaches, parameters, or options explicitly rejected and why, so they are not proposed again.)",
+    "(Key workspace file paths if any, and the immediate next step.)",
+)
+
 REQUIRED_SECTION_KEYWORDS = (
     "goal & scope",
     "hard constraints",
@@ -61,7 +71,11 @@ def get_data_dir() -> Path:
     env_override = os.environ.get("CONTEXT_ANCHOR_DATA_DIR") or os.environ.get("PLUGIN_DATA")
     if env_override:
         return Path(env_override).expanduser()
-    return Path.home() / ".gemini" / "antigravity" / "context-anchor-state"
+    plugin_data_dir = Path.home() / ".gemini" / "antigravity" / "plugin_data" / "context-anchor"
+    legacy_dir = Path.home() / ".gemini" / "antigravity" / "context-anchor-state"
+    if plugin_data_dir.exists() or not legacy_dir.exists():
+        return plugin_data_dir
+    return legacy_dir
 
 
 def _read_json_file(path: Path) -> dict[str, Any] | None:
@@ -110,6 +124,21 @@ def measure_ledger(text: str) -> tuple[int, int]:
 
 def is_paused(text: str) -> bool:
     return bool(PAUSED_RE.search(text))
+
+
+def is_template_only(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    cleaned = INHERITED_LINE_RE.sub("", text)
+    cleaned = PAUSED_RE.sub("", cleaned).strip()
+    if cleaned == DEFAULT_LEDGER_TEMPLATE.strip():
+        return True
+    if all(marker in cleaned for marker in TEMPLATE_PLACEHOLDER_MARKERS):
+        non_empty = [ln.strip() for ln in cleaned.splitlines() if ln.strip() and not ln.strip().startswith("<!--")]
+        tpl_non_empty = [ln.strip() for ln in DEFAULT_LEDGER_TEMPLATE.splitlines() if ln.strip() and not ln.strip().startswith("<!--")]
+        if len(non_empty) <= len(tpl_non_empty):
+            return True
+    return False
 
 
 def atomic_write_text(path: Path, text: str) -> None:
@@ -192,9 +221,11 @@ def detect_fork(transcript_info: dict[str, Any], initial_num_steps: int = 0) -> 
     total_lines = int(transcript_info.get("total_lines") or 0)
     init_steps = int(initial_num_steps or 0)
 
-    if isinstance(first_idx, int) and first_idx >= 3:
+    if isinstance(first_idx, int) and first_idx >= 2:
         return True
-    if init_steps > 0 and total_lines > 0 and (init_steps - total_lines) >= 5 and (first_idx or 0) > 0:
+    if total_lines == 0 and init_steps >= 3:
+        return True
+    if init_steps > 0 and total_lines > 0 and (init_steps - total_lines) >= 3 and (first_idx or 0) > 0:
         return True
     return False
 
@@ -277,13 +308,14 @@ def find_fork_parent(
     conversation_id: str,
     workspace_key: str,
     current_step_ceiling: int,
-    require_ledger: bool = True,
+    require_ledger: bool = False,
     max_age_hours: int | float = 48,
+    current_first_step: int | None = None,
 ) -> dict[str, Any] | None:
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=float(max_age_hours)) if max_age_hours and max_age_hours > 0 else None
 
-    candidates: list[tuple[dict[str, Any], Path | None]] = []
+    candidates: list[tuple[dict[str, Any], Path | None, bool]] = []
     for item in registry.get("conversations", []):
         if not isinstance(item, dict):
             continue
@@ -295,25 +327,42 @@ def find_fork_parent(
         if cutoff is not None and (dt is None or dt < cutoff):
             continue
         resolved_ledger = _resolve_candidate_ledger(item)
-        if require_ledger and resolved_ledger is None:
+        substantive = False
+        if resolved_ledger is not None:
+            try:
+                text = resolved_ledger.read_text(encoding="utf-8-sig")
+                substantive = bool(text) and not is_template_only(text) and not is_paused(text)
+            except Exception:
+                substantive = False
+        if require_ledger and not substantive:
             continue
-        candidates.append((item, resolved_ledger))
+        candidates.append((item, resolved_ledger, substantive))
 
     if not candidates:
         return None
 
-    def _sort_key(pair: tuple[dict[str, Any], Path | None]) -> tuple[int, str, int]:
-        item, _ = pair
+    fork_point = current_first_step if isinstance(current_first_step, int) and current_first_step > 0 else current_step_ceiling
+
+    def _sort_key(pair: tuple[dict[str, Any], Path | None, bool]) -> tuple[int, int, int, int, int, str]:
+        item, _, _ = pair
         step = int(item.get("lastStepIndex") if isinstance(item.get("lastStepIndex"), int) else -1)
-        step_ok = 1 if (current_step_ceiling <= 0 or step <= current_step_ceiling) else 0
-        return (step_ok, str(item.get("updatedAt") or ""), step)
+        item_first = item.get("firstStepIndex")
+        origin_ok = 1 if (not isinstance(item_first, int) or fork_point <= 0 or item_first < fork_point) else 0
+        reachable = 1 if (fork_point <= 0 or step >= fork_point - 10) else 0
+        not_forked = 0 if item.get("isForked") else 1
+        exact_pre_fork = 1 if (fork_point > 0 and (fork_point - 10) <= step <= fork_point) else 0
+        neg_distance = -abs(step - fork_point) if (fork_point > 0 and step >= 0) else 0
+        return (origin_ok, reachable, not_forked, exact_pre_fork, neg_distance, str(item.get("updatedAt") or ""))
 
     candidates.sort(key=_sort_key, reverse=True)
-    best_item, best_ledger = candidates[0]
+    best_item, best_ledger, best_substantive = candidates[0]
     enriched = dict(best_item)
-    if best_ledger is not None:
+    if best_ledger is not None and best_substantive:
         enriched["ledgerPath"] = str(best_ledger)
         enriched["hasLedger"] = True
+    else:
+        enriched["ledgerPath"] = ""
+        enriched["hasLedger"] = False
     return enriched
 
 

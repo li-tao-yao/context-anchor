@@ -13,7 +13,7 @@ if ($Uninstall) {
     } else {
         Write-Output "Plugin directory not found: $TargetDir"
     }
-    Write-Output "Note: Persistent hook state (if any) in `$env:USERPROFILE\.gemini\antigravity\context-anchor-state was preserved."
+    Write-Output "Note: Persistent hook state (if any) in `$env:USERPROFILE\.gemini\antigravity\plugin_data\context-anchor (and legacy context-anchor-state) was preserved."
     exit 0
 }
 

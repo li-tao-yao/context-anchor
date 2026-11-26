@@ -30,7 +30,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   else
     echo "Plugin directory not found: $TARGET_DIR"
   fi
-  echo "Note: Persistent hook state in ${HOME}/.gemini/antigravity/context-anchor-state was preserved."
+  echo "Note: Persistent hook state in ${HOME}/.gemini/antigravity/plugin_data/context-anchor (and legacy context-anchor-state) was preserved."
   exit 0
 fi
 

@@ -1,7 +1,7 @@
 {
   "name": "context-anchor",
   "displayName": "Context Anchor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Conversation-scoped working memory ledger with smart delta, compaction-aware, and fork-inherited context anchoring for long Antigravity sessions.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

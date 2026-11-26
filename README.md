@@ -25,13 +25,12 @@
 
 | 场景 / 阶段 | 行为 | 说明 |
 | :--- | :--- | :--- |
-| **第 1 ～ 6 轮** | **完全静默** | 不弹窗、不建文件、不注入多余提示，短平快聊天零打扰。 |
-| **第 7 轮起（未建账本）** | **静默自检（每 6 轮复检一次）** | Hook 提醒模型评估是否有重要约束/共识/多步任务需要记录；若是闲聊则不建账本、也不向你提及。 |
-| **手动随时开启** | **立刻创建并开始跟踪** | 发送 `/context-anchor start` 或直接说“开启记忆账本” / “开启 context-anchor”。 |
+| **普通对话（第 1 轮起）** | **默认自动建账本并注入** | `auto_start: true` 下首轮自动创建 `<artifactDirectoryPath>/memory_ledger.md` 并注入上下文，无需手动敲 `/context-anchor`；子代理会话自动跳过。 |
 | **账本内容变化时** | **立即注入** | 检测到 `memory_ledger.md` 的 SHA-256 哈希变化（含你自己在侧栏手改）后立刻重注入。 |
 | **发生上下文压缩时** | **立即注入** | 检测到 `transcript.jsonl` 新增 `CHECKPOINT`（自动压缩或 `/compact`）后立刻重新锚定。 |
 | **未变化且未压缩** | **每 6 轮重锚定一次** | 间隔 `< 6` 轮时 Hook 返回 `{}`，绝不在对话历史里堆叠重复副本。 |
-| **从 `/btw` 升级为新对话** | **自动继承父账本** | 检测到分叉会话后自动复制父对话的 `memory_ledger.md` 到新会话目录并立刻注入。 |
+| **`/btw` 分支隔离与升级** | **仅继承真父对话副本，零回写污染** | 开 `/btw` 时仅定位唯一真父对话并复制其**非空白模板**账本（绝不串台吸取兄弟 `/btw`）；丢弃的 `/btw` 不会污染主会话或后续分支；若将 `/btw` 升级为主会话，其副本可继续演化并作为后续分支的父账本。 |
+| **可选静默模式（`auto_start: false`）** | **前 6 轮静默，第 7 轮起自检** | 若偏好闲聊不自动建文件，可在用户配置覆盖 `"auto_start": false`，恢复前 6 轮静默 + 第 7 轮起按需创建。 |
 
 ---
 
@@ -102,10 +101,12 @@ python -m unittest discover -s tests -v
 .\scripts\install.ps1
 ```
 
-如需自定义阈值（如调整静默轮数或锚定间隔），不要改仓库文件，直接新建 `C:\Users\<用户名>\.gemini\antigravity\context-anchor-state\config.json` 覆盖对应字段即可，插件升级时不会丢失个人配置：
+如需自定义阈值（如关闭首轮自动建账本、调整锚定间隔），不要改仓库文件，直接新建 `C:\Users\<用户名>\.gemini\antigravity\plugin_data\context-anchor\config.json` 覆盖对应字段即可，插件升级时不会丢失个人配置：
 
 ```json
 {
+  "auto_start": true,
+  "skip_subagents": true,
   "auto_detect_after_turns": 6,
   "auto_detect_recheck_turns": 6,
   "reanchor_every_turns": 6,

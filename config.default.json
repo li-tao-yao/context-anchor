@@ -1,4 +1,6 @@
 {
+  "auto_start": true,
+  "skip_subagents": true,
   "auto_detect_after_turns": 6,
   "auto_detect_recheck_turns": 6,
   "reanchor_every_turns": 6,

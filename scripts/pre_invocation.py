@@ -15,12 +15,15 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from common import (  # noqa: E402
+    DEFAULT_LEDGER_TEMPLATE,
+    atomic_write_text,
     copy_ledger_on_fork,
     detect_fork,
     find_fork_parent,
     get_data_dir,
     get_plugin_root,
     is_paused,
+    is_template_only,
     load_config,
     load_registry,
     load_state,
@@ -43,6 +46,7 @@ def _build_ledger_injection(
     byte_count: int,
     config: dict[str, Any],
     inherited_from: str | None = None,
+    is_forked: bool = False,
 ) -> str:
     max_lines = int(config["max_lines"])
     max_bytes = int(config["max_bytes"])
@@ -52,8 +56,22 @@ def _build_ledger_injection(
     if "inherited" in triggers and inherited_from:
         lines.append(
             f"Note: Inherited working memory ledger from parent conversation ({inherited_from}). "
-            "Continue updating this copy in place as the conversation evolves."
+            "Use this ledger immediately as shared context; if this branch continues evolving decisions, "
+            "update this isolated copy in place before finalizing."
         )
+    elif "initialized" in triggers:
+        if is_forked:
+            lines.append(
+                "Note: Auto-initialized a fresh working memory ledger for this branched conversation "
+                "(parent had no active ledger). Respect read-only side-question rules if applicable; "
+                "otherwise populate the 5 sections with established facts before finalizing."
+            )
+        else:
+            lines.append(
+                "Note: Auto-initialized the working memory ledger for this conversation. "
+                "Replace the template placeholders with concise, confirmed goals, constraints, consensus, "
+                "rejected options, and active files/next steps before finalizing."
+            )
     if line_count > max_lines or byte_count > max_bytes:
         lines.append(
             f"WARNING: Ledger exceeds limit ({line_count}/{max_lines} lines, {byte_count}/{max_bytes} bytes). "
@@ -62,10 +80,23 @@ def _build_ledger_injection(
     lines.append("")
     lines.append(ledger_text.strip())
     lines.append("")
-    lines.append(
-        "Discipline: When confirmed goals, hard constraints, latest consensus, rejected options, "
-        "or next steps change, update this ledger IN PLACE (overwrite obsolete values) before finalizing."
-    )
+    if is_forked and mode == "project":
+        lines.append(
+            "Discipline: This is a /btw branch reading the shared project-pinned ledger as read-only context. "
+            "Do NOT write exploratory /btw discussion into the shared project ledger unless the user explicitly "
+            "decides to adopt or promote this branch."
+        )
+    elif is_forked:
+        lines.append(
+            "Discipline: Treat this isolated copy as active working memory. In a read-only /btw question, "
+            "do not edit files unless the user asks; if promoted to a working branch, overwrite obsolete "
+            "values in place before finalizing."
+        )
+    else:
+        lines.append(
+            "Discipline: When confirmed goals, hard constraints, latest consensus, rejected options, "
+            "or next steps change, update this ledger IN PLACE (overwrite obsolete values) before finalizing."
+        )
     return "\n".join(lines)
 
 
@@ -114,6 +145,16 @@ def process_hook(
     state = load_state(state_dir, conversation_id)
     registry = load_registry(state_dir)
     transcript_info = parse_transcript(transcript_path)
+
+    # Skip background/helper subagent sessions (0 USER_INPUT steps and empty lastUserInput)
+    # so they do not create noise ledgers or pollute fork-parent selection.
+    if (
+        bool(config.get("skip_subagents", True))
+        and int(transcript_info.get("user_turns") or 0) == 0
+        and not last_user_input
+    ):
+        return {}
+
     is_forked = detect_fork(transcript_info, initial_num_steps)
 
     paths = resolve_ledger_paths(artifact_dir, workspace_paths)
@@ -123,6 +164,7 @@ def process_hook(
     active_ledger: Path | None = None
     mode = ""
     just_inherited = False
+    just_initialized = False
 
     if project_ledger is not None and project_ledger.is_file():
         active_ledger = project_ledger
@@ -138,34 +180,50 @@ def process_hook(
     ):
         state["fork_checked"] = True
         step_ceiling = max(int(transcript_info.get("max_step_index") or -1), initial_num_steps)
+        first_step = transcript_info.get("first_step_index")
         max_age = float(config.get("fork_max_age_hours") or 48)
+        # Resolve the single true parent first; never fall back to stealing a sibling branch's ledger.
         parent = find_fork_parent(
             registry=registry,
             conversation_id=conversation_id,
             workspace_key=workspace_key,
             current_step_ceiling=step_ceiling,
-            require_ledger=True,
+            require_ledger=False,
             max_age_hours=max_age,
+            current_first_step=first_step if isinstance(first_step, int) else None,
         )
-        if parent and parent.get("ledgerPath"):
-            copy_ledger_on_fork(Path(parent["ledgerPath"]), session_ledger, str(parent["conversationId"]))
+        if parent:
             state["inherited_from"] = parent["conversationId"]
             state["inherited_base_turns"] = int(parent.get("userTurns") or 0)
-            active_ledger = session_ledger
-            mode = "session"
-            just_inherited = True
-        else:
-            parent_any = find_fork_parent(
-                registry=registry,
-                conversation_id=conversation_id,
-                workspace_key=workspace_key,
-                current_step_ceiling=step_ceiling,
-                require_ledger=False,
-                max_age_hours=max_age,
-            )
-            if parent_any:
-                state["inherited_from"] = parent_any["conversationId"]
-                state["inherited_base_turns"] = int(parent_any.get("userTurns") or 0)
+            parent_ledger_path = Path(parent["ledgerPath"]) if parent.get("ledgerPath") else None
+            if parent_ledger_path and parent_ledger_path.is_file():
+                try:
+                    parent_text = parent_ledger_path.read_text(encoding="utf-8-sig")
+                except Exception:
+                    parent_text = ""
+                if parent_text and not is_template_only(parent_text) and not is_paused(parent_text):
+                    copy_ledger_on_fork(parent_ledger_path, session_ledger, str(parent["conversationId"]))
+                    active_ledger = session_ledger
+                    mode = "session"
+                    just_inherited = True
+
+    if (
+        active_ledger is None
+        and bool(config.get("auto_start", True))
+        and session_ledger is not None
+    ):
+        atomic_write_text(session_ledger, DEFAULT_LEDGER_TEMPLATE)
+        active_ledger = session_ledger
+        mode = "session"
+        just_initialized = True
+
+    ledger_text = ""
+    ledger_paused = False
+    has_substantive_ledger = False
+    if active_ledger is not None:
+        ledger_text = active_ledger.read_text(encoding="utf-8-sig")
+        ledger_paused = is_paused(ledger_text)
+        has_substantive_ledger = bool(ledger_text) and not is_template_only(ledger_text) and not ledger_paused
 
     local_turns = int(transcript_info.get("user_turns") or 0)
     if local_turns <= 0:
@@ -183,14 +241,17 @@ def process_hook(
     effective_turns = max(1, base_turns + local_turns)
 
     last_step_index = max(int(transcript_info.get("max_step_index") or -1), initial_num_steps)
+    first_step_val = transcript_info.get("first_step_index")
     update_registry(
         state_dir,
         {
             "conversationId": conversation_id,
             "workspaceKey": workspace_key,
             "artifactDir": artifact_dir,
-            "ledgerPath": str(active_ledger) if active_ledger is not None else "",
-            "hasLedger": active_ledger is not None,
+            "ledgerPath": str(active_ledger) if has_substantive_ledger else "",
+            "hasLedger": has_substantive_ledger,
+            "firstStepIndex": first_step_val if isinstance(first_step_val, int) else 0,
+            "isForked": is_forked,
             "lastStepIndex": last_step_index,
             "userTurns": effective_turns,
             "updatedAt": datetime.now(timezone.utc).isoformat(),
@@ -199,8 +260,7 @@ def process_hook(
     )
 
     if active_ledger is not None:
-        ledger_text = active_ledger.read_text(encoding="utf-8-sig")
-        if is_paused(ledger_text):
+        if ledger_paused:
             save_state(state_dir, conversation_id, state)
             return {}
 
@@ -210,6 +270,8 @@ def process_hook(
         triggers: list[str] = []
         if just_inherited:
             triggers.append("inherited")
+        if just_initialized:
+            triggers.append("initialized")
         if state.get("last_injected_hash") != content_hash:
             triggers.append("changed")
 
@@ -242,17 +304,14 @@ def process_hook(
                 byte_count=byte_count,
                 config=config,
                 inherited_from=state.get("inherited_from"),
+                is_forked=is_forked,
             )
+            # Omit systemMessage.metadata to avoid Antigravity ScrubInternalFields panic.
             return {
                 "injectSteps": [
                     {
                         "systemMessage": {
                             "systemMessage": msg,
-                            "metadata": {
-                                "source": "context-anchor",
-                                "mode": mode,
-                                "triggers": triggers,
-                            },
                         }
                     }
                 ]
@@ -281,11 +340,6 @@ def process_hook(
                 {
                     "systemMessage": {
                         "systemMessage": msg,
-                        "metadata": {
-                            "source": "context-anchor",
-                            "mode": "auto-detect",
-                            "turn": effective_turns,
-                        },
                     }
                 }
             ]

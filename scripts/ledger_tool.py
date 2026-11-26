@@ -383,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_msave = sub.add_parser("memory-save", help="Create or overwrite an L2 memory card and sync L1 index.")
     p_msave.add_argument("--target", required=True, help="Target L1 ledger markdown path.")
-    p_msave.add_argument("--name", required=True, help="Memory card slug/filename (e.g. figure_labels).")
+    p_msave.add_argument("--name", required=True, help="Memory card slug/filename (e.g. api_contract).")
     p_msave.add_argument("--title", default="", help="Human-readable card title.")
     p_msave.add_argument("--trigger", default="", help="When the agent must read this card.")
     p_msave.add_argument("--keywords", default="", help="Comma-separated trigger keywords for PreInvocation hints.")

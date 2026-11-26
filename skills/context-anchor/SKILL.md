@@ -26,17 +26,17 @@ Locate the helper CLI at `../../scripts/ledger_tool.py` relative to this `SKILL.
    ```
 
 ### 2. Save / Update / List / Delete L2 Topic Memory Cards (`memories/*.md`)
-Offload bulky domain tables, glossaries, figure labels, per-chapter progress, or exclusion lists into `<ledger_dir>/memories/<slug>.md` while keeping non-negotiable hard constraints in L1:
+Offload bulky domain tables, glossaries, API/schema specs, module progress, or exclusion lists into `<ledger_dir>/memories/<slug>.md` while keeping non-negotiable hard constraints in L1:
 
 - **Create or overwrite an L2 card (auto-syncs L1 index)**:
   ```bash
   python "<plugin_root>/scripts/ledger_tool.py" memory-save \
     --target "<active_ledger_path>" \
-    --name "figure_labels" \
-    --title "附图标记与部件名称表" \
-    --trigger "修改附图、零件标号或实施例部件名称前必读" \
-    --keywords "附图,标号,部件,实施例" \
-    --summary "统一管理全部附图标记与最新命名" \
+    --name "api_contract" \
+    --title "核心接口与字段规范" \
+    --trigger "修改后端接口、请求字段或错误码定义前必读" \
+    --keywords "接口,字段,错误码,API" \
+    --summary "统一管理核心 API 字段命名与错误码约定" \
     --body-file "<optional_body_md_file>"
   ```
   (Or pass `--body "<markdown content>"` for short bodies.)

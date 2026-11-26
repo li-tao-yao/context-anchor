@@ -5,7 +5,7 @@ This workspace/environment uses **Context Anchor** to preserve confirmed decisio
 ## Two-Tier Architecture (L1 + L2)
 1. **L1 — Always-Anchored Working Ledger (`memory_ledger.md`)**:
    - **Session mode (default)**: `<artifactDirectoryPath>/memory_ledger.md`
-   - **Project-pinned mode (optional)**: `<workspace>/.agents/context-anchor/memory_ledger.md` (takes precedence when present; ideal for ultra-long multi-session projects such as patents, textbooks, or large codebases).
+   - **Project-pinned mode (optional)**: `<workspace>/.agents/context-anchor/memory_ledger.md` (takes precedence when present; ideal for ultra-long multi-session projects such as large codebases, architecture specs, or multi-version technical documents).
    - Keep L1 concise (`<= 120 lines`, `<= 4000 chars`, `<= 12288 bytes`) with 5 core sections:
      1. `## 1. Goal & Scope` — core objective and boundaries.
      2. `## 2. Hard Constraints` — **non-negotiable rules, tolerances, red lines, and style limits. Never demote high-risk hard constraints solely into L2.**
@@ -14,7 +14,7 @@ This workspace/environment uses **Context Anchor** to preserve confirmed decisio
      5. `## 5. Active Files & Next` — key paths and immediate next step.
    - When L2 cards exist, an auto-synced `## 6. L2 Memory Index (Read on Demand)` table sits at the bottom of `memory_ledger.md`.
 2. **L2 — On-Demand Topic Memory Cards (`memories/*.md` alongside `memory_ledger.md`)**:
-   - Use L2 when bulky structured knowledge would bloat L1 (e.g., figure label tables, terminology/symbol glossaries, per-chapter revision status, exclusion lists, API/schema specs, review/OA pitfalls).
+   - Use L2 when bulky structured knowledge would bloat L1 (e.g., API/schema specs, terminology glossaries, module status tables, exclusion lists, architecture trade-offs, debugging pitfalls).
    - Each card uses lightweight YAML frontmatter (`title`, `trigger`, `keywords`, `updated`, `summary`) and is **overwritten in place** with the latest truth (keep superseded drafts in Git or Recycle Bin, never as duplicate memory cards).
    - Manage L2 cards via `ledger_tool.py memory-save` / `memory-delete` / `sync-index` so the L1 index stays strictly in sync without manual drift.
 

@@ -620,7 +620,7 @@ class ContextAnchorTests(unittest.TestCase):
         art, tr = self._conv_dirs("conv-cn-budget")
         ledger = art / "memory_ledger.md"
         # ~2,500 Chinese chars = ~7,500 UTF-8 bytes: previously triggered 6KB warning, now OK under 4000 chars / 12KB
-        cn_block = "\n".join(f"- 第{i}条设计约束：采用标准无砟轨道结构参数与统一术语规范，保持最新定稿口径。" for i in range(1, 70))
+        cn_block = "\n".join(f"- 第{i}条设计约束：采用统一接口字段命名与错误码规范，保持最新基线配置。" for i in range(1, 70))
         ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n" + cn_block + "\n", encoding="utf-8")
         write_transcript(tr, build_linear_steps(1))
         res_ok = process_hook(self._payload("conv-cn-budget", art, tr, self.workspace), plugin_root=REPO_ROOT, data_dir=self.data_dir)
@@ -628,7 +628,7 @@ class ContextAnchorTests(unittest.TestCase):
         self.assertNotIn("WARNING: Ledger exceeds limit", msg_ok)
 
         # Exceed max_chars (>4000 chars) -> triggers warning with L2 offload advice
-        huge_block = "\n".join(f"- 第{i}条超长明细：" + ("轨道参数" * 18) for i in range(1, 65))
+        huge_block = "\n".join(f"- 第{i}条超长明细：" + ("配置参数" * 18) for i in range(1, 65))
         ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n" + huge_block + "\n", encoding="utf-8")
         res_warn = process_hook(self._payload("conv-cn-budget", art, tr, self.workspace, invocation_num=1), plugin_root=REPO_ROOT, data_dir=self.data_dir)
         msg_warn = self._assert_valid_injection(res_warn)
@@ -647,34 +647,34 @@ class ContextAnchorTests(unittest.TestCase):
                     "--target",
                     str(ledger),
                     "--name",
-                    "figure_labels",
+                    "api_contract",
                     "--title",
-                    "附图标记与部件名称表",
+                    "核心接口与字段规范",
                     "--trigger",
-                    "修改附图或实施例部件标号前必读",
+                    "修改后端接口或字段定义前必读",
                     "--keywords",
-                    "附图,标号,部件,实施例",
+                    "接口,字段,错误码,分页",
                     "--summary",
-                    "统一管理18个附图标记与最新命名",
+                    "统一管理全部核心API字段与错误码约定",
                     "--updated",
                     "2026-11-26",
                     "--body",
-                    "# 附图标记\n- 100：承载基座\n- 101：升降导向机构",
+                    "# 接口规范\n- 分页字段：items / total / next_cursor\n- 错误码前缀：AUTH_ / SYNC_",
                 ]
             ),
             0,
         )
-        card = art / "memories" / "figure_labels.md"
+        card = art / "memories" / "api_contract.md"
         self.assertTrue(card.is_file())
         ledger_text = ledger.read_text(encoding="utf-8")
         self.assertIn("l2-index:start", ledger_text)
-        self.assertIn("`memories/figure_labels.md`", ledger_text)
-        self.assertIn("统一管理18个附图标记与最新命名", ledger_text)
+        self.assertIn("`memories/api_contract.md`", ledger_text)
+        self.assertIn("统一管理全部核心API字段与错误码约定", ledger_text)
         self.assertEqual(ledger_main(["check", "--target", str(ledger)]), 0)
         self.assertEqual(ledger_main(["memory-list", "--target", str(ledger)]), 0)
 
         # Delete removes file and cleanly strips the L2 index block when empty
-        self.assertEqual(ledger_main(["memory-delete", "--target", str(ledger), "--name", "figure_labels"]), 0)
+        self.assertEqual(ledger_main(["memory-delete", "--target", str(ledger), "--name", "api_contract"]), 0)
         self.assertFalse(card.exists())
         cleaned_text = ledger.read_text(encoding="utf-8")
         self.assertNotIn("l2-index:start", cleaned_text)
@@ -683,7 +683,7 @@ class ContextAnchorTests(unittest.TestCase):
     def test_24_l2_keyword_hint_fires_on_unchanged_turn_and_dedups(self) -> None:
         art, tr = self._conv_dirs("conv-l2-hint")
         ledger = art / "memory_ledger.md"
-        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Active project: Patent v12\n", encoding="utf-8")
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Active project: Service v12\n", encoding="utf-8")
         self.assertEqual(
             ledger_main(
                 [
@@ -691,17 +691,17 @@ class ContextAnchorTests(unittest.TestCase):
                     "--target",
                     str(ledger),
                     "--name",
-                    "figure_labels",
+                    "api_contract",
                     "--title",
-                    "附图标记表",
+                    "接口字段规范",
                     "--trigger",
-                    "修改附图或标号前必读",
+                    "修改接口或错误码前必读",
                     "--keywords",
-                    "附图,标号,API",
+                    "接口,错误码,API",
                     "--summary",
-                    "全部附图编号清单",
+                    "核心接口约定清单",
                     "--body",
-                    "- 100：底座",
+                    "- status: ok",
                 ]
             ),
             0,
@@ -720,19 +720,19 @@ class ContextAnchorTests(unittest.TestCase):
         # Turn 2: L1 unchanged, Chinese keyword matches -> compact l2_hint fires WITHOUT repeating full L1
         write_transcript(tr, build_linear_steps(2))
         res2_a = process_hook(
-            self._payload("conv-l2-hint", art, tr, self.workspace, invocation_num=0, last_user_input="帮我核对图3的零件标号"),
+            self._payload("conv-l2-hint", art, tr, self.workspace, invocation_num=0, last_user_input="帮我核对登录模块的错误码"),
             plugin_root=REPO_ROOT,
             data_dir=self.data_dir,
         )
         msg2_a = self._assert_valid_injection(res2_a)
         self.assertIn("triggers=l2_hint", msg2_a)
-        self.assertIn("`memories/figure_labels.md`", msg2_a)
-        self.assertIn("Matched: 标号", msg2_a)
+        self.assertIn("`memories/api_contract.md`", msg2_a)
+        self.assertIn("Matched: 错误码", msg2_a)
         self.assertNotIn("## 1. Goal & Scope", msg2_a, "Hint-only injection must not duplicate full L1 ledger")
 
         # Turn 2 second invocation (same turn & prompt) -> deduplicated to silent {}
         res2_b = process_hook(
-            self._payload("conv-l2-hint", art, tr, self.workspace, invocation_num=1, last_user_input="帮我核对图3的零件标号"),
+            self._payload("conv-l2-hint", art, tr, self.workspace, invocation_num=1, last_user_input="帮我核对登录模块的错误码"),
             plugin_root=REPO_ROOT,
             data_dir=self.data_dir,
         )
@@ -752,18 +752,18 @@ class ContextAnchorTests(unittest.TestCase):
     def test_25_l2_hint_merges_with_l1_and_warns_when_index_unsynced(self) -> None:
         art, tr = self._conv_dirs("conv-l2-unsynced")
         ledger = art / "memory_ledger.md"
-        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Textbook revision v8\n", encoding="utf-8")
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Architecture Spec v8\n", encoding="utf-8")
         # Hand-create an L2 file WITHOUT calling sync-index
         mem_dir = art / "memories"
         mem_dir.mkdir(parents=True, exist_ok=True)
         (mem_dir / "symbols.md").write_text(
-            "---\ntitle: 符号术语表\ntrigger: 修改公式前必读\nkeywords: [公式, 符号]\nsummary: 全书统一数学符号\n---\n- E: 弹性模量\n",
+            "---\ntitle: 命名与术语表\ntrigger: 修改配置项前必读\nkeywords: [配置项, 术语]\nsummary: 全项目统一命名规范\n---\n- TTL: 缓存过期时间\n",
             encoding="utf-8",
         )
 
         write_transcript(tr, build_linear_steps(1))
         res = process_hook(
-            self._payload("conv-l2-unsynced", art, tr, self.workspace, last_user_input="统一第3章公式里的符号"),
+            self._payload("conv-l2-unsynced", art, tr, self.workspace, last_user_input="统一模块配置项里的术语"),
             plugin_root=REPO_ROOT,
             data_dir=self.data_dir,
         )
@@ -780,7 +780,7 @@ class ContextAnchorTests(unittest.TestCase):
     def test_26_btw_fork_copies_and_isolates_l2_memories(self) -> None:
         p_art, p_tr = self._conv_dirs("parent-l2")
         p_ledger = p_art / "memory_ledger.md"
-        p_ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Parent Patent v5\n", encoding="utf-8")
+        p_ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Parent Release v5\n", encoding="utf-8")
         self.assertEqual(
             ledger_main(
                 [
@@ -788,17 +788,17 @@ class ContextAnchorTests(unittest.TestCase):
                     "--target",
                     str(p_ledger),
                     "--name",
-                    "claims",
+                    "routing_rules",
                     "--title",
-                    "当前权利要求",
+                    "当前路由规则",
                     "--trigger",
-                    "修改权利要求前必读",
+                    "修改网关路由规则前必读",
                     "--keywords",
-                    "权利要求,独立权项",
+                    "路由规则,网关",
                     "--summary",
-                    "v5 最新独权与从权",
+                    "v5 最新路由与限流策略",
                     "--body",
-                    "- 权利要求1：原版结构",
+                    "- 规则1：默认限流 100 req/s",
                 ]
             ),
             0,
@@ -814,12 +814,12 @@ class ContextAnchorTests(unittest.TestCase):
         c_art, c_tr = self._conv_dirs("child-l2")
         write_transcript(c_tr, build_linear_steps(1, start_step=20))
         res_c = process_hook(
-            self._payload("child-l2", c_art, c_tr, self.workspace, initial_num_steps=22, last_user_input="检查权利要求1"),
+            self._payload("child-l2", c_art, c_tr, self.workspace, initial_num_steps=22, last_user_input="检查网关路由规则"),
             plugin_root=REPO_ROOT,
             data_dir=self.data_dir,
         )
-        child_card = c_art / "memories" / "claims.md"
-        parent_card = p_art / "memories" / "claims.md"
+        child_card = c_art / "memories" / "routing_rules.md"
+        parent_card = p_art / "memories" / "routing_rules.md"
         self.assertTrue(child_card.is_file(), "Forked /btw branch must inherit L2 memories/*.md")
         msg_c = self._assert_valid_injection(res_c)
         self.assertIn("triggers=inherited,changed,l2_hint", msg_c)
@@ -846,9 +846,9 @@ class ContextAnchorTests(unittest.TestCase):
                     "--keywords",
                     "术语",
                     "--summary",
-                    "全书统一术语",
+                    "项目统一术语",
                     "--body",
-                    "- 无砟轨道 = ballastless track",
+                    "- 幂等 = idempotent",
                 ]
             ),
             0,
@@ -862,7 +862,7 @@ class ContextAnchorTests(unittest.TestCase):
         self.assertTrue(pinned_card.is_file())
 
         # Update pinned L2 card, then unpin back to a fresh session dir
-        pinned_card.write_text(pinned_card.read_text(encoding="utf-8") + "\n- 轨枕 = sleeper\n", encoding="utf-8")
+        pinned_card.write_text(pinned_card.read_text(encoding="utf-8") + "\n- 重试 = retry\n", encoding="utf-8")
         art2, _ = self._conv_dirs("conv-unpin-dst")
         dst_ledger = art2 / "memory_ledger.md"
         self.assertEqual(
@@ -872,7 +872,7 @@ class ContextAnchorTests(unittest.TestCase):
         self.assertFalse(pinned_card.exists())
         restored_card = art2 / "memories" / "terms.md"
         self.assertTrue(restored_card.is_file())
-        self.assertIn("轨枕 = sleeper", restored_card.read_text(encoding="utf-8"))
+        self.assertIn("重试 = retry", restored_card.read_text(encoding="utf-8"))
 
     def test_28_l2_frontmatter_fallbacks_and_max_entries_cap(self) -> None:
         art, _ = self._conv_dirs("conv-l2-edge")

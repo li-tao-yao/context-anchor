@@ -16,7 +16,7 @@
 
 ## 解决什么问题？
 
-在持续几十到上百轮的深度任务中（如专利撰写、教材/论文多轮修订、复杂系统设计与调试），大模型工作记忆往往在三个地方失效：
+在持续几十到上百轮的深度任务中（如长篇技术方案/架构文档多轮迭代、中大型工程重构、复杂系统设计与调试），大模型工作记忆往往在三个地方失效：
 
 1. **压缩失忆（Compaction Amnesia）**：长对话触发自动压缩或 `/compact` 后，早期敲定的硬参数、红线约束和否决理由极易被过度概括甚至丢失。
 2. **多版本串稿（Stale-Version Drift）**：文稿或方案迭代到 v10+ 后，历史对话里混杂着 v1～v9 的废弃草稿，模型容易重新提出已否决方案，或把旧版符号/编号带入最新版。
@@ -35,7 +35,7 @@ flowchart LR
     H -->|"关键词命中 (中英零依赖)"| K["定向 l2_hint 提醒<br/>(同轮自动去重)"]
     L1 --> A["Antigravity Agent 上下文末端"]
     K --> A
-    A -->|"命中触发条件时 read_file"| L2["L2 专题记忆卡<br/>memories/*.md<br/>术语表 · 附图标号 · 分章状态 · 踩坑明细"]
+    A -->|"命中触发条件时 read_file"| L2["L2 专题记忆卡<br/>memories/*.md<br/>接口规范 · 术语表 · 模块状态 · 排错记录"]
     L2 -->|"ledger_tool.py sync-index"| L1
     L1 -.->|"/btw 分支隔离拷贝"| B["隔离副本<br/>(L1 + memories/*.md)"]
 ```
@@ -64,10 +64,10 @@ flowchart LR
 
 ## 典型使用场景
 
-### 1. 超长多版本文档（专利撰写、教材修订、论文返修）
+### 1. 超长多版本技术方案与架构文档
 使用 `/context-anchor pin` 将记忆固定到项目目录 `.agents/context-anchor/`，跨多个新会话无缝接力：
-- **L1 (`memory_ledger.md`)**：锁死目标期刊/审查口径、当前定稿基线（如 `v14`）、红线格式要求、当前待改章节。
-- **L2 (`memories/*.md`)**：按专题拆分并原地覆写——例如专利拆 `claims_current.md`、`figure_labels.md`、`oa_pitfalls.md`；教材拆 `symbols_terms.md`、`chapter_status.md`、`format_rules.md`。
+- **L1 (`memory_ledger.md`)**：锁死核心技术约束、当前定稿基线（如 `v14`）、接口与规范红线、当前待改模块。
+- **L2 (`memories/*.md`)**：按专题拆分并原地覆写——例如拆分为 `api_contract.md`、`glossary.md`、`module_status.md`、`debug_pitfalls.md`。
 
 ### 2. 复杂工程调试与 `/btw` 多路线探索
 默认使用会话级 `session` 模式（存放在 `<artifactDirectoryPath>/`，不污染代码仓库）：
@@ -143,17 +143,17 @@ python -m unittest discover -s tests -v
 
 ```markdown
 ---
-title: 附图标记与部件名称表
-trigger: 修改附图、零件标号或实施例部件名称前必读
-keywords: [附图, 标号, 部件, 实施例]
+title: 核心接口与字段规范
+trigger: 修改后端接口、请求字段或错误码定义前必读
+keywords: [接口, 字段, 错误码, API, schema]
 updated: 2026-11-26
-summary: 统一管理全部附图标记与最新命名，防止跨章节编号冲突
+summary: 统一管理全部核心 API 字段命名、分页格式与错误码约定
 ---
 
-# 附图标记与部件名称表
+# 核心接口与字段规范
 
-- 100：承载基座
-- 101：升降导向机构
+- 分页响应统一使用 `items` / `total` / `next_cursor`
+- 错误码按模块前缀划分（`AUTH_*`、`SYNC_*`）
 ```
 
 通过 `scripts/ledger_tool.py` 管理（自动维护 L1 底部索引，避免手工双写漂移）：
@@ -161,9 +161,9 @@ summary: 统一管理全部附图标记与最新命名，防止跨章节编号�
 ```powershell
 # 新建或原地更新 L2 卡片并自动同步 L1 索引
 python scripts/ledger_tool.py memory-save --target "<ledger_path>" `
-  --name "figure_labels" --title "附图标记与部件名称表" `
-  --trigger "修改附图或标号前必读" --keywords "附图,标号,部件" `
-  --summary "统一管理全部附图标记与最新命名" --body-file "draft.md"
+  --name "api_contract" --title "核心接口与字段规范" `
+  --trigger "修改接口或字段定义前必读" --keywords "接口,字段,错误码,API" `
+  --summary "统一管理核心 API 字段命名与错误码约定" --body-file "draft.md"
 
 # 列出所有 L2 卡片 / 重新同步索引 / 删除废弃卡片 / 体积与同步检查
 python scripts/ledger_tool.py memory-list   --target "<ledger_path>"

@@ -2,12 +2,12 @@
   "name": "context-anchor",
   "displayName": "Context Anchor",
   "version": "0.3.0",
-  "description": "Two-tier (L1 working ledger + L2 topic memories) working memory plugin with smart delta, compaction-aware re-anchoring, fork-isolated /btw inheritance, auto-synced L2 index, and lightweight keyword recall hints for Antigravity.",
+  "description": "Two-tier working memory (L1 ledger + L2 topic cards) for Antigravity: prevents compaction amnesia, stale-version drift, and lazy recall with auto-synced indexes, Chinese-native keyword hints, and isolated /btw fork inheritance.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "为当前任务开启 Context Anchor 记忆账本，记录核心目标、硬约束与最新共识。",
-    "整理并精简当前的 memory_ledger.md，把大块领域明细下沉为 L2 专题记忆卡并同步索引。",
-    "把当前会话的记忆账本与 L2 专题记忆固定到当前项目工作区，方便后续新对话继续沿用。"
+    "整理当前 memory_ledger.md，把大块明细下沉为 L2 专题记忆卡并自动同步索引。",
+    "将当前记忆账本与 L2 专题卡片固定到当前项目工作区，供后续新对话持续接力。"
   ],
   "author": {
     "name": "li-tao-yao",

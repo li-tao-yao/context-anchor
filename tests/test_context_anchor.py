@@ -616,6 +616,326 @@ class ContextAnchorTests(unittest.TestCase):
         self.assertIn("read-only context", msg)
         self.assertIn("Do NOT write exploratory /btw discussion", msg)
 
+    def test_22_chinese_fair_char_and_byte_budget(self) -> None:
+        art, tr = self._conv_dirs("conv-cn-budget")
+        ledger = art / "memory_ledger.md"
+        # ~2,500 Chinese chars = ~7,500 UTF-8 bytes: previously triggered 6KB warning, now OK under 4000 chars / 12KB
+        cn_block = "\n".join(f"- 第{i}条设计约束：采用标准无砟轨道结构参数与统一术语规范，保持最新定稿口径。" for i in range(1, 70))
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n" + cn_block + "\n", encoding="utf-8")
+        write_transcript(tr, build_linear_steps(1))
+        res_ok = process_hook(self._payload("conv-cn-budget", art, tr, self.workspace), plugin_root=REPO_ROOT, data_dir=self.data_dir)
+        msg_ok = self._assert_valid_injection(res_ok)
+        self.assertNotIn("WARNING: Ledger exceeds limit", msg_ok)
+
+        # Exceed max_chars (>4000 chars) -> triggers warning with L2 offload advice
+        huge_block = "\n".join(f"- 第{i}条超长明细：" + ("轨道参数" * 18) for i in range(1, 65))
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n" + huge_block + "\n", encoding="utf-8")
+        res_warn = process_hook(self._payload("conv-cn-budget", art, tr, self.workspace, invocation_num=1), plugin_root=REPO_ROOT, data_dir=self.data_dir)
+        msg_warn = self._assert_valid_injection(res_warn)
+        self.assertIn("WARNING: Ledger exceeds limit", msg_warn)
+        self.assertIn("memories/*.md", msg_warn)
+
+    def test_23_l2_memory_save_sync_list_delete_cli(self) -> None:
+        art, _ = self._conv_dirs("conv-l2-cli")
+        ledger = art / "memory_ledger.md"
+        self.assertEqual(ledger_main(["init", "--target", str(ledger)]), 0)
+
+        self.assertEqual(
+            ledger_main(
+                [
+                    "memory-save",
+                    "--target",
+                    str(ledger),
+                    "--name",
+                    "figure_labels",
+                    "--title",
+                    "附图标记与部件名称表",
+                    "--trigger",
+                    "修改附图或实施例部件标号前必读",
+                    "--keywords",
+                    "附图,标号,部件,实施例",
+                    "--summary",
+                    "统一管理18个附图标记与最新命名",
+                    "--updated",
+                    "2026-11-26",
+                    "--body",
+                    "# 附图标记\n- 100：承载基座\n- 101：升降导向机构",
+                ]
+            ),
+            0,
+        )
+        card = art / "memories" / "figure_labels.md"
+        self.assertTrue(card.is_file())
+        ledger_text = ledger.read_text(encoding="utf-8")
+        self.assertIn("l2-index:start", ledger_text)
+        self.assertIn("`memories/figure_labels.md`", ledger_text)
+        self.assertIn("统一管理18个附图标记与最新命名", ledger_text)
+        self.assertEqual(ledger_main(["check", "--target", str(ledger)]), 0)
+        self.assertEqual(ledger_main(["memory-list", "--target", str(ledger)]), 0)
+
+        # Delete removes file and cleanly strips the L2 index block when empty
+        self.assertEqual(ledger_main(["memory-delete", "--target", str(ledger), "--name", "figure_labels"]), 0)
+        self.assertFalse(card.exists())
+        cleaned_text = ledger.read_text(encoding="utf-8")
+        self.assertNotIn("l2-index:start", cleaned_text)
+        self.assertEqual(ledger_main(["check", "--target", str(ledger)]), 0)
+
+    def test_24_l2_keyword_hint_fires_on_unchanged_turn_and_dedups(self) -> None:
+        art, tr = self._conv_dirs("conv-l2-hint")
+        ledger = art / "memory_ledger.md"
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Active project: Patent v12\n", encoding="utf-8")
+        self.assertEqual(
+            ledger_main(
+                [
+                    "memory-save",
+                    "--target",
+                    str(ledger),
+                    "--name",
+                    "figure_labels",
+                    "--title",
+                    "附图标记表",
+                    "--trigger",
+                    "修改附图或标号前必读",
+                    "--keywords",
+                    "附图,标号,API",
+                    "--summary",
+                    "全部附图编号清单",
+                    "--body",
+                    "- 100：底座",
+                ]
+            ),
+            0,
+        )
+
+        # Turn 1: L1 changed (unrelated prompt) -> L1 injected without l2_hint
+        write_transcript(tr, build_linear_steps(1))
+        res1 = process_hook(
+            self._payload("conv-l2-hint", art, tr, self.workspace, last_user_input="capital budget overview"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        msg1 = self._assert_valid_injection(res1)
+        self.assertNotIn("l2_hint", msg1, "ASCII keyword 'API' must not match substring inside 'capital'")
+
+        # Turn 2: L1 unchanged, Chinese keyword matches -> compact l2_hint fires WITHOUT repeating full L1
+        write_transcript(tr, build_linear_steps(2))
+        res2_a = process_hook(
+            self._payload("conv-l2-hint", art, tr, self.workspace, invocation_num=0, last_user_input="帮我核对图3的零件标号"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        msg2_a = self._assert_valid_injection(res2_a)
+        self.assertIn("triggers=l2_hint", msg2_a)
+        self.assertIn("`memories/figure_labels.md`", msg2_a)
+        self.assertIn("Matched: 标号", msg2_a)
+        self.assertNotIn("## 1. Goal & Scope", msg2_a, "Hint-only injection must not duplicate full L1 ledger")
+
+        # Turn 2 second invocation (same turn & prompt) -> deduplicated to silent {}
+        res2_b = process_hook(
+            self._payload("conv-l2-hint", art, tr, self.workspace, invocation_num=1, last_user_input="帮我核对图3的零件标号"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        self.assertEqual(res2_b, {})
+
+        # Turn 3: ASCII word-boundary keyword 'API' matches -> fires again on new turn
+        write_transcript(tr, build_linear_steps(3))
+        res3 = process_hook(
+            self._payload("conv-l2-hint", art, tr, self.workspace, last_user_input="Update the API contract"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        msg3 = self._assert_valid_injection(res3)
+        self.assertIn("triggers=l2_hint", msg3)
+        self.assertIn("Matched: API", msg3)
+
+    def test_25_l2_hint_merges_with_l1_and_warns_when_index_unsynced(self) -> None:
+        art, tr = self._conv_dirs("conv-l2-unsynced")
+        ledger = art / "memory_ledger.md"
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Textbook revision v8\n", encoding="utf-8")
+        # Hand-create an L2 file WITHOUT calling sync-index
+        mem_dir = art / "memories"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        (mem_dir / "symbols.md").write_text(
+            "---\ntitle: 符号术语表\ntrigger: 修改公式前必读\nkeywords: [公式, 符号]\nsummary: 全书统一数学符号\n---\n- E: 弹性模量\n",
+            encoding="utf-8",
+        )
+
+        write_transcript(tr, build_linear_steps(1))
+        res = process_hook(
+            self._payload("conv-l2-unsynced", art, tr, self.workspace, last_user_input="统一第3章公式里的符号"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        msg = self._assert_valid_injection(res)
+        self.assertIn("triggers=changed,l2_hint", msg)
+        self.assertIn("not yet listed in the L1 index", msg)
+        self.assertIn("`memories/symbols.md`", msg)
+        # check should warn because L2 index is out of sync
+        self.assertEqual(ledger_main(["check", "--target", str(ledger)]), 1)
+        # sync-index fixes it
+        self.assertEqual(ledger_main(["sync-index", "--target", str(ledger)]), 0)
+        self.assertEqual(ledger_main(["check", "--target", str(ledger)]), 0)
+
+    def test_26_btw_fork_copies_and_isolates_l2_memories(self) -> None:
+        p_art, p_tr = self._conv_dirs("parent-l2")
+        p_ledger = p_art / "memory_ledger.md"
+        p_ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Parent Patent v5\n", encoding="utf-8")
+        self.assertEqual(
+            ledger_main(
+                [
+                    "memory-save",
+                    "--target",
+                    str(p_ledger),
+                    "--name",
+                    "claims",
+                    "--title",
+                    "当前权利要求",
+                    "--trigger",
+                    "修改权利要求前必读",
+                    "--keywords",
+                    "权利要求,独立权项",
+                    "--summary",
+                    "v5 最新独权与从权",
+                    "--body",
+                    "- 权利要求1：原版结构",
+                ]
+            ),
+            0,
+        )
+        write_transcript(p_tr, build_linear_steps(5))
+        process_hook(
+            self._payload("parent-l2", p_art, p_tr, self.workspace, initial_num_steps=9),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+
+        # Fork child /btw
+        c_art, c_tr = self._conv_dirs("child-l2")
+        write_transcript(c_tr, build_linear_steps(1, start_step=20))
+        res_c = process_hook(
+            self._payload("child-l2", c_art, c_tr, self.workspace, initial_num_steps=22, last_user_input="检查权利要求1"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        child_card = c_art / "memories" / "claims.md"
+        parent_card = p_art / "memories" / "claims.md"
+        self.assertTrue(child_card.is_file(), "Forked /btw branch must inherit L2 memories/*.md")
+        msg_c = self._assert_valid_injection(res_c)
+        self.assertIn("triggers=inherited,changed,l2_hint", msg_c)
+        self.assertIn(str(child_card), msg_c)
+
+        # Mutate child's L2 card -> parent's L2 card remains untouched
+        child_card.write_text(child_card.read_text(encoding="utf-8") + "\n- 分支实验方案\n", encoding="utf-8")
+        self.assertNotIn("分支实验方案", parent_card.read_text(encoding="utf-8"))
+
+    def test_27_pin_and_unpin_preserve_l2_memories(self) -> None:
+        art, _ = self._conv_dirs("conv-pin-l2")
+        session_ledger = art / "memory_ledger.md"
+        self.assertEqual(ledger_main(["init", "--target", str(session_ledger)]), 0)
+        self.assertEqual(
+            ledger_main(
+                [
+                    "memory-save",
+                    "--target",
+                    str(session_ledger),
+                    "--name",
+                    "terms",
+                    "--title",
+                    "术语表",
+                    "--keywords",
+                    "术语",
+                    "--summary",
+                    "全书统一术语",
+                    "--body",
+                    "- 无砟轨道 = ballastless track",
+                ]
+            ),
+            0,
+        )
+
+        self.assertEqual(
+            ledger_main(["pin", "--workspace", str(self.workspace), "--session-ledger", str(session_ledger)]),
+            0,
+        )
+        pinned_card = self.workspace / ".agents" / "context-anchor" / "memories" / "terms.md"
+        self.assertTrue(pinned_card.is_file())
+
+        # Update pinned L2 card, then unpin back to a fresh session dir
+        pinned_card.write_text(pinned_card.read_text(encoding="utf-8") + "\n- 轨枕 = sleeper\n", encoding="utf-8")
+        art2, _ = self._conv_dirs("conv-unpin-dst")
+        dst_ledger = art2 / "memory_ledger.md"
+        self.assertEqual(
+            ledger_main(["unpin", "--workspace", str(self.workspace), "--session-ledger", str(dst_ledger)]),
+            0,
+        )
+        self.assertFalse(pinned_card.exists())
+        restored_card = art2 / "memories" / "terms.md"
+        self.assertTrue(restored_card.is_file())
+        self.assertIn("轨枕 = sleeper", restored_card.read_text(encoding="utf-8"))
+
+    def test_28_l2_frontmatter_fallbacks_and_max_entries_cap(self) -> None:
+        art, _ = self._conv_dirs("conv-l2-edge")
+        ledger = art / "memory_ledger.md"
+        self.assertEqual(ledger_main(["init", "--target", str(ledger)]), 0)
+        mem_dir = art / "memories"
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        # Hand-written file with no frontmatter + pipe character in heading
+        (mem_dir / "01_plain.md").write_text("# 规则 A | 规则 B\n正文第一行摘要内容\n", encoding="utf-8")
+        # Multiline YAML keyword list
+        (mem_dir / "02_yaml_list.md").write_text(
+            "---\ntitle: 多行列表卡\ntrigger: 检查 | 复核\nkeywords:\n  - 复核\n  - 校对\nsummary: 测试多行关键词\n---\n内容\n",
+            encoding="utf-8",
+        )
+        (mem_dir / "03_extra.md").write_text("---\ntitle: 第三张\nsummary: 超限截断测试\n---\n内容\n", encoding="utf-8")
+
+        self.assertEqual(ledger_main(["sync-index", "--target", str(ledger), "--max-entries", "2"]), 0)
+        text = ledger.read_text(encoding="utf-8")
+        self.assertIn(r"规则 A \| 规则 B", text)
+        self.assertIn("Showing 2/3 L2 memory cards", text)
+
+    def test_29_l2_keyword_hints_respect_disable_config(self) -> None:
+        self._set_user_config({"l2_keyword_hints": False})
+        art, tr = self._conv_dirs("conv-l2-off")
+        ledger = art / "memory_ledger.md"
+        ledger.write_text(DEFAULT_LEDGER_TEMPLATE + "\n- Spec: v1\n", encoding="utf-8")
+        self.assertEqual(
+            ledger_main(
+                [
+                    "memory-save",
+                    "--target",
+                    str(ledger),
+                    "--name",
+                    "glossary",
+                    "--title",
+                    "术语表",
+                    "--keywords",
+                    "术语,符号",
+                    "--summary",
+                    "术语",
+                    "--body",
+                    "- A=1",
+                ]
+            ),
+            0,
+        )
+        write_transcript(tr, build_linear_steps(1))
+        res1 = process_hook(
+            self._payload("conv-l2-off", art, tr, self.workspace, last_user_input="核对术语"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        msg1 = self._assert_valid_injection(res1)
+        self.assertNotIn("l2_hint", msg1)
+
+        write_transcript(tr, build_linear_steps(2))
+        res2 = process_hook(
+            self._payload("conv-l2-off", art, tr, self.workspace, last_user_input="再核对一次符号"),
+            plugin_root=REPO_ROOT,
+            data_dir=self.data_dir,
+        )
+        self.assertEqual(res2, {})
+
 
 if __name__ == "__main__":
     unittest.main()

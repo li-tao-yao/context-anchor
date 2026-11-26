@@ -1,63 +1,88 @@
 ---
 name: context-anchor
-description: Manage the Context Anchor working memory ledger (start, compact, pin to project, unpin, export, pause, resume, or inspect status) in long Antigravity conversations.
+description: Manage the Context Anchor L1 working memory ledger and L2 topic memory cards (start, compact, memory-save, sync-index, pin, unpin, export, pause, resume, or status) in long Antigravity conversations.
 ---
 
 # Context Anchor Skill
 
-Use this skill when the user invokes `/context-anchor` or asks in natural language to start, update, compact, pin, unpin, export, pause, resume, or inspect their working memory ledger.
+Use this skill when the user invokes `/context-anchor` or asks in natural language to start, update, compact, manage L2 topic memory cards (`memories/*.md`), sync the L2 index, pin/unpin a project ledger, export, pause, resume, or inspect status.
 
 Locate the helper CLI at `../../scripts/ledger_tool.py` relative to this `SKILL.md` file (or `~/.gemini/config/plugins/context-anchor/scripts/ledger_tool.py`).
 
 ## Supported Workflows
 
-### 1. Start / Enable (`start` or "开启记忆账本" / "开启 context-anchor")
+### 1. Start / Enable (`start` or "开启记忆账本")
 1. Determine target path:
-   - If the workspace already has `.agents/context-anchor/memory_ledger.md`, use it.
+   - If `<workspace>/.agents/context-anchor/memory_ledger.md` exists, use it.
    - Otherwise use `<artifactDirectoryPath>/memory_ledger.md`.
 2. Initialize if missing:
    ```bash
    python "<plugin_root>/scripts/ledger_tool.py" init --target "<target_path>"
    ```
-3. Immediately populate the 5 sections (`Goal & Scope`, `Hard Constraints`, `Current Consensus`, `Rejected & Pitfalls`, `Active Files & Next`) with facts already established in the conversation so far.
-4. Run a size/schema check:
+3. Immediately populate the 5 L1 sections with established facts from the conversation.
+4. Validate:
    ```bash
    python "<plugin_root>/scripts/ledger_tool.py" check --target "<target_path>"
    ```
 
-### 2. Compact / Audit (`compact` or "整理记忆账本")
-1. Read the active `memory_ledger.md`.
-2. Merge redundant bullets, remove superseded values so only the latest consensus remains, keep rejected options concise, and trim to `<= 120 lines` / `<= 6144 bytes`.
-3. Write the cleaned file and verify with `ledger_tool.py check --target "<path>"`.
+### 2. Save / Update / List / Delete L2 Topic Memory Cards (`memories/*.md`)
+Offload bulky domain tables, glossaries, figure labels, per-chapter progress, or exclusion lists into `<ledger_dir>/memories/<slug>.md` while keeping non-negotiable hard constraints in L1:
 
-### 3. Pin to Project (`pin` or "固定到当前项目")
-1. Copy the active session ledger into `<workspace>/.agents/context-anchor/memory_ledger.md` so new conversations in the same project inherit it automatically:
-   ```bash
-   python "<plugin_root>/scripts/ledger_tool.py" pin --workspace "<workspace_root>" --session-ledger "<artifact_dir>/memory_ledger.md"
-   ```
-   (Omit `--session-ledger` if no session ledger exists yet.)
+- **Create or overwrite an L2 card (auto-syncs L1 index)**:
+  ```bash
+  python "<plugin_root>/scripts/ledger_tool.py" memory-save \
+    --target "<active_ledger_path>" \
+    --name "figure_labels" \
+    --title "附图标记与部件名称表" \
+    --trigger "修改附图、零件标号或实施例部件名称前必读" \
+    --keywords "附图,标号,部件,实施例" \
+    --summary "统一管理全部附图标记与最新命名" \
+    --body-file "<optional_body_md_file>"
+  ```
+  (Or pass `--body "<markdown content>"` for short bodies.)
+- **List L2 cards & index sync status**:
+  ```bash
+  python "<plugin_root>/scripts/ledger_tool.py" memory-list --target "<active_ledger_path>"
+  ```
+- **Delete an obsolete L2 card (auto-syncs L1 index)**:
+  ```bash
+  python "<plugin_root>/scripts/ledger_tool.py" memory-delete --target "<active_ledger_path>" --name "obsolete_card"
+  ```
+- **Re-sync the L1 index table after manually editing `memories/*.md`**:
+  ```bash
+  python "<plugin_root>/scripts/ledger_tool.py" sync-index --target "<active_ledger_path>"
+  ```
 
-### 4. Unpin from Project (`unpin` or "取消项目固定")
-1. Optionally preserve the latest state back into `<artifactDirectoryPath>/memory_ledger.md` and remove the workspace pin:
+### 3. Compact / Audit (`compact` or "整理记忆账本")
+1. Read the active `memory_ledger.md` (and run `memory-list` if `memories/` exists).
+2. Merge redundant bullets, overwrite superseded version details in place, move bulky reference lists into `memories/*.md` cards, keep L1 within `<= 120 lines` / `<= 4000 chars` / `<= 12288 bytes`.
+3. Run `sync-index` and verify with `check`:
    ```bash
-   python "<plugin_root>/scripts/ledger_tool.py" unpin --workspace "<workspace_root>" --session-ledger "<artifact_dir>/memory_ledger.md"
+   python "<plugin_root>/scripts/ledger_tool.py" sync-index --target "<active_ledger_path>"
+   python "<plugin_root>/scripts/ledger_tool.py" check --target "<active_ledger_path>"
    ```
+
+### 4. Pin / Unpin to Project (`pin` / `unpin`)
+- **Pin** copies both `memory_ledger.md` and `memories/*.md` into `<workspace>/.agents/context-anchor/`:
+  ```bash
+  python "<plugin_root>/scripts/ledger_tool.py" pin --workspace "<workspace_root>" --session-ledger "<artifact_dir>/memory_ledger.md"
+  ```
+- **Unpin** optionally copies both `memory_ledger.md` and `memories/*.md` back to the session artifact dir before removing the workspace pin:
+  ```bash
+  python "<plugin_root>/scripts/ledger_tool.py" unpin --workspace "<workspace_root>" --session-ledger "<artifact_dir>/memory_ledger.md"
+  ```
 
 ### 5. Export (`export`)
-1. Copy the active ledger to a user-chosen Markdown path in the workspace (e.g. `DESIGN_SUMMARY.md` or `docs/decision-ledger.md`) without changing the active hook tracking path.
+Copy the active ledger (and optionally `memories/`) to a user-chosen Markdown path in the workspace without changing the active hook tracking path.
 
-### 6. Pause / Resume (`off` / `pause` / `resume`)
-- Pause automatic injections for the active ledger:
-  ```bash
-  python "<plugin_root>/scripts/ledger_tool.py" pause --target "<active_ledger_path>"
-  ```
-- Resume automatic injections:
-  ```bash
-  python "<plugin_root>/scripts/ledger_tool.py" resume --target "<active_ledger_path>"
-  ```
+### 6. Pause / Resume (`pause` / `resume`)
+```bash
+python "<plugin_root>/scripts/ledger_tool.py" pause --target "<active_ledger_path>"
+python "<plugin_root>/scripts/ledger_tool.py" resume --target "<active_ledger_path>"
+```
 
 ### 7. Status (`status`)
 ```bash
 python "<plugin_root>/scripts/ledger_tool.py" status --artifact-dir "<artifact_dir>" --workspace "<workspace_root>" --conversation-id "<conversation_id>"
 ```
-Report the mode (`session` / `project` / `inactive`), active file path, line/byte counts, paused state, and any parent conversation inheritance.
+Report mode (`session` / `project` / `inactive`), active path, line/char/byte counts, L2 card count & index sync state, paused state, and parent fork inheritance.

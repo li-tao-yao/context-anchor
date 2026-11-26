@@ -1,23 +1,22 @@
 # Context Anchor
 
-**适用于 Google Antigravity 桌面端（及 CLI / IDE）的轻量级单会话工作记忆锚定插件。**
+**适用于 Google Antigravity 桌面端（及 CLI / IDE）的轻量级 L1 + L2 分层工作记忆插件。**
 
-> A lightweight, zero-dependency working memory ledger plugin for Google Antigravity that prevents context rot, compaction amnesia, and `/btw` branch memory loss in long multi-turn conversations.
+> A lightweight, zero-dependency two-tier (L1 working ledger + L2 topic memories) memory plugin for Google Antigravity that prevents context rot, compaction amnesia, lazy recall, and `/btw` branch memory loss in long multi-turn and multi-version workflows.
 
 ---
 
-## 为什么需要 Context Anchor？
+## 为什么采用 L1 + L2 分层架构？（v0.3.0）
 
-跨会话记忆库（如 `Mem0`、`Graphiti`、`OpenViking`、`engramory`）解决的是“下次开新会话时去检索历史”；而在 **单个超长对话**（比如持续 40～100 轮的设计方案打磨、复杂调试、长文架构讨论）中，模型真正的失忆原因有三个：
+在超长对话和极多版本迭代任务（如专利撰写、教材/论文多轮修订、复杂系统调试）中，纯单文件记忆容易写满，而纯外部记忆库（仅靠按需读文件或向量检索）容易出现**模型偷懒不查（Lazy Recall）**或**误召回已作废旧版本**的问题。
 
-1. **自动压缩丢失硬参数**：长对话触发上下文压缩后，早期敲定的具体尺寸、公差、边界条件、否决理由很容易被过度概括甚至丢掉。
-2. **上下文腐化（Lost in the Middle）**：几十轮来回修改后，v1～v8 的作废草稿全堆在历史里，模型容易串版本或重新提出早就否决过的方案。
-3. **重型 MCP 工具容易“忘了查”**：依赖模型主动调工具查库时，高频迭代经常不触发查询；向量检索还可能把旧草稿一起召回。
-
-**Context Anchor 的解法：**
-- **唯一的“原地覆写”工作账本（`memory_ledger.md`）**：只保留最新生效结论与不可违背的红线约束，旧值直接覆盖出正文，体积硬控制在 `<= 120 行 / 6 KB`。
-- **智能增量 + 压缩感知 + 周期重锚定**：借助 Antigravity 原生 `PreInvocation` Hook，在必要时刻把账本推到上下文最末端（注意力最强处），其余轮次零重复注入。
-- **不污染工作区 & 支持 `/btw` 续接继承**：默认按对话 ID 存放在 Antigravity 的会话 Artifact 目录中，纯文本对话也能用；使用 `/btw` 升级成独立续接对话时自动继承父对话账本并继续独立演化。
+**Context Anchor v0.3.0 的解法：**
+- **L1 常驻工作账本（`memory_ledger.md`）**：原地覆写当前目标、**不可妥协的高危硬约束（绝不下沉）**、当前版本基线、否决事项与下一步，并在底部维护一张自动生成的 **L2 专题索引表**。默认容量按中英文公平计费（`<= 120 行 / 4000 字符 / 12 KB`），解决 UTF-8 中文 3 字节惩罚问题。
+- **L2 专题记忆卡（`memories/*.md`）**：按主题存放大块领域明细（如附图标记表、术语符号表、分章进度、排除清单、审查意见避坑点），带极简 YAML Frontmatter（`title / trigger / keywords / updated / summary`）。平时 **0 token 占用**，每次改版原地覆写最新态，避免旧版本污染。
+- **自动索引同步 + 轻量关键词触发提醒（`l2_hint`）**：
+  - 通过 `ledger_tool.py sync-index` 自动刷新 L1 底部目录，消除手写索引漂移；
+  - `PreInvocation` Hook 每轮自动用零依赖纯 Python 匹配当前输入与 L2 卡片的 `keywords`（原生支持中文子串与英文词边界），命中时直接注入精简提醒，提示模型先 `read_file` 再动手，无需重型数据库或外部中文分词库。
+- **增量注入 + 压缩重锚 + `/btw` 隔离继承**：延续 Antigravity 原生 `PreInvocation` 增量机制，并在 `/btw` 分支或 `pin`/`unpin` 项目固定时自动同步隔离复制 `memory_ledger.md` 与全部 `memories/*.md`。
 
 ---
 
@@ -25,25 +24,44 @@
 
 | 场景 / 阶段 | 行为 | 说明 |
 | :--- | :--- | :--- |
-| **普通对话（第 1 轮起）** | **默认自动建账本并注入** | `auto_start: true` 下首轮自动创建 `<artifactDirectoryPath>/memory_ledger.md` 并注入上下文，无需手动敲 `/context-anchor`；子代理会话自动跳过。 |
-| **账本内容变化时** | **立即注入** | 检测到 `memory_ledger.md` 的 SHA-256 哈希变化（含你自己在侧栏手改）后立刻重注入。 |
+| **普通对话（第 1 轮起）** | **默认自动建账本并注入** | `auto_start: true` 下首轮自动创建 `<artifactDirectoryPath>/memory_ledger.md` 并注入上下文；子代理会话自动跳过。 |
+| **账本内容变化时** | **立即注入** | 检测到 `memory_ledger.md` 的 SHA-256 哈希变化（含侧栏手改或 `sync-index` 更新）后立刻重注入。 |
 | **发生上下文压缩时** | **立即注入** | 检测到 `transcript.jsonl` 新增 `CHECKPOINT`（自动压缩或 `/compact`）后立刻重新锚定。 |
-| **未变化且未压缩** | **每 6 轮重锚定一次** | 间隔 `< 6` 轮时 Hook 返回 `{}`，绝不在对话历史里堆叠重复副本。 |
-| **`/btw` 分支隔离与升级** | **仅继承真父对话副本，零回写污染** | 开 `/btw` 时仅定位唯一真父对话并复制其**非空白模板**账本（绝不串台吸取兄弟 `/btw`）；丢弃的 `/btw` 不会污染主会话或后续分支；若将 `/btw` 升级为主会话，其副本可继续演化并作为后续分支的父账本。 |
-| **可选静默模式（`auto_start: false`）** | **前 6 轮静默，第 7 轮起自检** | 若偏好闲聊不自动建文件，可在用户配置覆盖 `"auto_start": false`，恢复前 6 轮静默 + 第 7 轮起按需创建。 |
+| **用户输入命中 L2 关键词** | **精准注入精简 `l2_hint`** | 即使 L1 未变化，只要本轮 `lastUserInput` 命中某张 `memories/*.md` 的 `keywords`，自动注入 2–4 行定向 `read_file` 提醒（同轮内多次工具调用自动去重，不刷屏）。 |
+| **未变化、未压缩、未命中 L2** | **每 6 轮重锚定一次** | 间隔 `< 6` 轮时 Hook 返回 `{}`，绝不在对话历史里堆叠重复副本。 |
+| **`/btw` 分支隔离与升级** | **隔离复制 L1 + 全部 L2 卡片** | 开 `/btw` 时仅定位唯一真父对话并复制其非空白账本与 `memories/*.md`；分支内修改互不污染。 |
+| **可选静默模式（`auto_start: false`）** | **前 6 轮静默，第 7 轮起自检** | 在用户配置覆盖 `"auto_start": false` 即可切换为按需触发。 |
 
 ---
 
-## 两种存储模式（自动兼容纯文本对话与工程项目）
+## 两种存储模式与 L2 目录结构
 
 1. **默认模式：会话级 Artifact（`session`）**
-   - 路径：`<artifactDirectoryPath>/memory_ledger.md`
-   - 适用：纯文本长对话、临时方案推演、新建项目不想往代码目录里塞多余文件。
-   - 桌面端右侧 **Artifacts / Overview** 面板可直接点开查看和手改。
+   - L1：`<artifactDirectoryPath>/memory_ledger.md`
+   - L2：`<artifactDirectoryPath>/memories/*.md`
+   - 适用：单线程长对话、临时方案推演、不希望往代码/项目目录写入辅助文件。
 2. **可选模式：项目固定（`project`）**
-   - 路径：`<workspace>/.agents/context-anchor/memory_ledger.md`
-   - 适用：需要在**同一个项目目录的多个新会话**之间长期接力。
-   - 使用 `/context-anchor pin`（或让模型执行 `pin`）一键将当前账本固定到项目，`/context-anchor unpin` 解除固定。
+   - L1：`<workspace>/.agents/context-anchor/memory_ledger.md`
+   - L2：`<workspace>/.agents/context-anchor/memories/*.md`
+   - 适用：专利撰写、教材修订、长期工程研发等需要**跨多个新会话接力**的超长项目，各项目天然隔离不串台。
+   - 使用 `/context-anchor pin` 一键连同 `memories/` 固定到工作区，`/context-anchor unpin` 解除固定并可回拷到会话目录。
+
+### L2 专题记忆卡格式示例（`memories/figure_labels.md`）
+
+```markdown
+---
+title: 附图标记与部件名称表
+trigger: 修改附图、零件标号或实施例部件名称前必读
+keywords: [附图, 标号, 部件, 实施例]
+updated: 2026-11-26
+summary: 统一管理全部附图标记与最新命名，防止跨章节编号冲突
+---
+
+# 附图标记与部件名称表
+
+- 100：承载基座
+- 101：升降导向机构
+```
 
 ---
 
@@ -51,20 +69,20 @@
 
 ```text
 context-anchor/
-├── plugin.json                      # Antigravity 插件清单
+├── plugin.json                      # Antigravity 插件清单（v0.3.0）
 ├── hooks.json                       # PreInvocation 生命周期钩子
-├── config.default.json              # 默认阈值配置
+├── config.default.json              # 默认阈值与 L2 配置
 ├── assets/logo.svg                  # 插件图标
-├── rules/AGENTS.md                  # 常驻工作记忆纪律
-├── skills/context-anchor/SKILL.md   # /context-anchor 手动管理技能
+├── rules/AGENTS.md                  # 常驻 L1 + L2 工作记忆纪律
+├── skills/context-anchor/SKILL.md   # /context-anchor 管理技能
 ├── scripts/
-│   ├── common.py                    # 配置、transcript 解析、分叉检测、注册表
-│   ├── pre_invocation.py            # PreInvocation 智能增量注入引擎（纯标准库）
-│   ├── ledger_tool.py               # 账本初始化、体积校验、pin/unpin/pause/status 工具
+│   ├── common.py                    # 配置、Frontmatter 解析、L2 索引与匹配、分叉检测
+│   ├── pre_invocation.py            # PreInvocation 智能增量与 L2 关键词提醒引擎（纯标准库）
+│   ├── ledger_tool.py               # init/check/sync-index/memory-save/list/delete/pin/unpin/status
 │   ├── install.ps1                  # Windows 一键安装 / 更新 / 卸载脚本
 │   └── install.sh                   # macOS / Linux 安装脚本
 └── tests/
-    └── test_context_anchor.py       # 自动化单元测试套件
+    └── test_context_anchor.py       # 自动化单元测试套件（29 项用例）
 ```
 
 ---
@@ -84,8 +102,6 @@ cd context-anchor
 插件将被同步到 `C:\Users\<用户名>\.gemini\config\plugins\context-anchor\`。
 打开 Antigravity 桌面端左侧 **Customizations → Installed**，即可看到 **Context Anchor** 卡片，支持随时一键启用/停用。
 
-> 新建任意本地项目目录时，只要该插件在全局目录处于启用状态，即**零配置自动生效**。
-
 ### 2. macOS / Linux 安装
 
 ```bash
@@ -93,7 +109,7 @@ chmod +x ./scripts/install.sh
 ./scripts/install.sh
 ```
 
-### 3. 更新与维护
+### 3. 更新与测试
 
 ```powershell
 git pull
@@ -101,7 +117,7 @@ python -m unittest discover -s tests -v
 .\scripts\install.ps1
 ```
 
-如需自定义阈值（如关闭首轮自动建账本、调整锚定间隔），不要改仓库文件，直接新建 `C:\Users\<用户名>\.gemini\antigravity\plugin_data\context-anchor\config.json` 覆盖对应字段即可，插件升级时不会丢失个人配置：
+如需自定义配置，不要直接修改仓库文件，新建 `C:\Users\<用户名>\.gemini\antigravity\plugin_data\context-anchor\config.json` 覆盖字段即可，升级时自动保留：
 
 ```json
 {
@@ -111,7 +127,11 @@ python -m unittest discover -s tests -v
   "auto_detect_recheck_turns": 6,
   "reanchor_every_turns": 6,
   "max_lines": 120,
-  "max_bytes": 6144
+  "max_chars": 4000,
+  "max_bytes": 12288,
+  "l2_index_max_entries": 40,
+  "l2_keyword_hints": true,
+  "l2_max_hint_matches": 3
 }
 ```
 
@@ -125,20 +145,19 @@ python -m unittest discover -s tests -v
 
 ## `/context-anchor` 常用指令
 
-在 Antigravity 桌面端输入框直接输入或对模型说出以下需求即可：
 - `/context-anchor start`（或“开启记忆账本”）：立刻建立并写入当前对话账本
-- `/context-anchor compact`（或“整理记忆账本”）：合并精简账本，清理已过时条目
-- `/context-anchor pin`：将当前账本固定到工作区 `.agents/context-anchor/memory_ledger.md`
-- `/context-anchor unpin`：取消工作区固定，还原为仅会话内生效
+- `/context-anchor compact`（或“整理记忆账本”）：精简 L1、将大块明细拆入 L2 专题卡并校验体积
+- `ledger_tool.py memory-save / memory-list / memory-delete / sync-index`：管理 `memories/*.md` 并自动刷新 L1 索引表
+- `/context-anchor pin` / `unpin`：连同 L2 卡片一起固定到工作区 `.agents/context-anchor/` 或解除固定
 - `/context-anchor pause` / `resume`：临时暂停或恢复当前账本注入
-- `/context-anchor status`：查看当前模式、行数/字节数及继承来源
+- `/context-anchor status`：查看当前模式、行数/字符数/字节数、L2 卡片数量与索引同步状态
 
 ---
 
 ## 隐私与安全
 
-- 所有状态与账本文件**100% 存储在本地**，不调用任何外部模型或网络接口，不上传任何数据。
-- 内置纪律明确禁止在 `memory_ledger.md` 中写入密码、API Key、Token、Cookie 或私钥明文。
+- 所有状态、L1 账本与 L2 专题卡片**100% 存储在本地**，不调用任何外部模型或网络接口。
+- 内置纪律明确禁止在 `memory_ledger.md` 或 `memories/*.md` 中写入密码、API Key、Token、Cookie 或私钥明文。
 - Hook 脚本采用 **Fail-Open** 设计：任何异常均静默输出 `{}` 并以退出码 `0` 结束，绝不阻塞主对话流程。
 
 ## License

@@ -16,6 +16,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from common import (  # noqa: E402
     DEFAULT_LEDGER_TEMPLATE,
+    L2_INDEX_START,
     atomic_write_text,
     copy_ledger_on_fork,
     detect_fork,
@@ -27,14 +28,27 @@ from common import (  # noqa: E402
     load_config,
     load_registry,
     load_state,
-    measure_ledger,
+    match_l2_memories,
+    measure_ledger_metrics,
     normalize_workspace_key,
     parse_transcript,
     resolve_ledger_paths,
     save_state,
+    scan_l2_memories,
     sha256_text,
     update_registry,
 )
+
+
+def _format_l2_match_lines(matched_cards: list[dict[str, Any]]) -> list[str]:
+    lines = ["Matched L2 memory cards for this turn (call `read_file` before acting):"]
+    for card in matched_cards:
+        kws = ", ".join(str(k) for k in card.get("matched_keywords", []))
+        trigger = card.get("trigger") or card.get("summary") or card.get("title") or ""
+        lines.append(
+            f"- `{card['rel_path']}` ({card['title']}) | Trigger: {trigger} | Matched: {kws} | Path: {card['path']}"
+        )
+    return lines
 
 
 def _build_ledger_injection(
@@ -42,14 +56,20 @@ def _build_ledger_injection(
     ledger_path: Path,
     mode: str,
     triggers: list[str],
-    line_count: int,
-    byte_count: int,
+    metrics: dict[str, int],
     config: dict[str, Any],
     inherited_from: str | None = None,
     is_forked: bool = False,
+    l2_cards: list[dict[str, Any]] | None = None,
+    matched_l2: list[dict[str, Any]] | None = None,
 ) -> str:
     max_lines = int(config["max_lines"])
+    max_chars = int(config.get("max_chars") or 4000)
     max_bytes = int(config["max_bytes"])
+    line_count = metrics["lines"]
+    char_count = metrics["chars"]
+    byte_count = metrics["bytes"]
+
     lines = [
         f"[context-anchor | mode={mode} | triggers={','.join(triggers)} | path={ledger_path}]",
     ]
@@ -72,31 +92,59 @@ def _build_ledger_injection(
                 "Replace the template placeholders with concise, confirmed goals, constraints, consensus, "
                 "rejected options, and active files/next steps before finalizing."
             )
-    if line_count > max_lines or byte_count > max_bytes:
+    if line_count > max_lines or char_count > max_chars or byte_count > max_bytes:
         lines.append(
-            f"WARNING: Ledger exceeds limit ({line_count}/{max_lines} lines, {byte_count}/{max_bytes} bytes). "
-            "Compact and merge redundant bullets in place before appending new items."
+            f"WARNING: Ledger exceeds limit ({line_count}/{max_lines} lines, "
+            f"{char_count}/{max_chars} chars, {byte_count}/{max_bytes} bytes). "
+            "Compact and merge redundant bullets in place, or offload bulky detail tables/glossaries "
+            "into `memories/*.md` L2 cards and run `ledger_tool.py sync-index`."
         )
+
     lines.append("")
     lines.append(ledger_text.strip())
     lines.append("")
+
+    if l2_cards and L2_INDEX_START.lower() not in ledger_text.lower():
+        card_names = ", ".join(f"`{c['rel_path']}`" for c in l2_cards[:10])
+        suffix = f" (+{len(l2_cards) - 10} more)" if len(l2_cards) > 10 else ""
+        lines.append(
+            f"Note: Found {len(l2_cards)} L2 memory card(s) under `memories/` ({card_names}{suffix}) "
+            "not yet listed in the L1 index. Run `ledger_tool.py sync-index --target <ledger>` to sync."
+        )
+
+    if matched_l2:
+        lines.extend(_format_l2_match_lines(matched_l2))
+        lines.append("")
+
     if is_forked and mode == "project":
         lines.append(
             "Discipline: This is a /btw branch reading the shared project-pinned ledger as read-only context. "
-            "Do NOT write exploratory /btw discussion into the shared project ledger unless the user explicitly "
-            "decides to adopt or promote this branch."
+            "Do NOT write exploratory /btw discussion into the shared project ledger or its `memories/` cards "
+            "unless the user explicitly decides to adopt or promote this branch."
         )
     elif is_forked:
         lines.append(
-            "Discipline: Treat this isolated copy as active working memory. In a read-only /btw question, "
-            "do not edit files unless the user asks; if promoted to a working branch, overwrite obsolete "
-            "values in place before finalizing."
+            "Discipline: Treat this isolated copy (and its `memories/` directory) as active working memory. "
+            "In a read-only /btw question, do not edit files unless the user asks; if promoted to a working branch, "
+            "overwrite obsolete values in place before finalizing."
         )
     else:
         lines.append(
-            "Discipline: When confirmed goals, hard constraints, latest consensus, rejected options, "
-            "or next steps change, update this ledger IN PLACE (overwrite obsolete values) before finalizing."
+            "Discipline: Keep L1 concise (goals, non-negotiable hard constraints, active baseline, next step, and L2 index). "
+            "Overwrite obsolete values in place; store bulky domain glossaries/specs/pitfalls in `memories/*.md` and sync index."
         )
+    return "\n".join(lines)
+
+
+def _build_l2_hint_only_injection(
+    ledger_path: Path,
+    mode: str,
+    matched_l2: list[dict[str, Any]],
+) -> str:
+    lines = [
+        f"[context-anchor | mode={mode} | triggers=l2_hint | path={ledger_path}]",
+    ]
+    lines.extend(_format_l2_match_lines(matched_l2))
     return "\n".join(lines)
 
 
@@ -111,8 +159,8 @@ def _build_auto_detect_injection(
         "Silently evaluate the conversation so far:\n"
         "- If durable hard constraints, confirmed specs/decisions, rejected approaches, or multi-step tasks exist "
         "that should not be forgotten across long turns or compaction, create and populate the 5-section working "
-        f"memory ledger at `{target_path}` (keep <= {config['max_lines']} lines / {config['max_bytes']} bytes; "
-        "overwrite in place; never store secrets).\n"
+        f"memory ledger at `{target_path}` (keep <= {config['max_lines']} lines / {config.get('max_chars', 4000)} chars / "
+        f"{config['max_bytes']} bytes; overwrite in place; offload bulky detail to `memories/*.md`; never store secrets).\n"
         "- If this is casual Q&A or short one-off help with nothing durable to preserve, do NOTHING and do NOT "
         "mention this check to the user."
     )
@@ -141,6 +189,7 @@ def process_hook(
     transcript_path = str(payload.get("transcriptPath") or "").strip()
     initial_num_steps = int(payload.get("initialNumSteps") or 0)
     last_user_input = str(payload.get("lastUserInput") or "").strip()
+    prompt_hash = sha256_text(last_user_input) if last_user_input else ""
 
     state = load_state(state_dir, conversation_id)
     registry = load_registry(state_dir)
@@ -231,10 +280,8 @@ def process_hook(
         if not isinstance(seen, list):
             seen = []
             state["seen_prompt_hashes"] = seen
-        if last_user_input:
-            prompt_hash = sha256_text(last_user_input)
-            if prompt_hash not in seen:
-                seen.append(prompt_hash)
+        if prompt_hash and prompt_hash not in seen:
+            seen.append(prompt_hash)
         local_turns = len(seen) if seen else 1
 
     base_turns = int(state.get("inherited_base_turns") or 0)
@@ -265,7 +312,15 @@ def process_hook(
             return {}
 
         content_hash = sha256_text(ledger_text)
-        line_count, byte_count = measure_ledger(ledger_text)
+        metrics = measure_ledger_metrics(ledger_text)
+        l2_cards = scan_l2_memories(active_ledger)
+        matched_l2: list[dict[str, Any]] = []
+        if bool(config.get("l2_keyword_hints", True)) and l2_cards and last_user_input:
+            matched_l2 = match_l2_memories(
+                l2_cards,
+                last_user_input,
+                max_matches=int(config.get("l2_max_hint_matches") or 3),
+            )
 
         triggers: list[str] = []
         if just_inherited:
@@ -276,7 +331,9 @@ def process_hook(
             triggers.append("changed")
 
         cp_count = int(transcript_info.get("checkpoint_count") or 0)
-        max_cp_step = int(transcript_info.get("max_checkpoint_step") if transcript_info.get("max_checkpoint_step") is not None else -1)
+        max_cp_step = int(
+            transcript_info.get("max_checkpoint_step") if transcript_info.get("max_checkpoint_step") is not None else -1
+        )
         prev_cp_count = int(state.get("last_checkpoint_count") or 0)
         prev_cp_step = int(state.get("last_checkpoint_step") if state.get("last_checkpoint_step") is not None else -1)
         if cp_count > prev_cp_count or max_cp_step > prev_cp_step:
@@ -287,7 +344,19 @@ def process_hook(
         if last_inj_turn > 0 and (effective_turns - last_inj_turn) >= reanchor_every:
             triggers.append("reanchor")
 
+        already_hinted_this_prompt = (
+            bool(prompt_hash)
+            and state.get("last_l2_hint_prompt_hash") == prompt_hash
+            and int(state.get("last_l2_hint_turn") or 0) == effective_turns
+        )
+
         if triggers:
+            include_l2 = matched_l2 if not already_hinted_this_prompt else []
+            if include_l2:
+                triggers.append("l2_hint")
+                state["last_l2_hint_prompt_hash"] = prompt_hash
+                state["last_l2_hint_turn"] = effective_turns
+
             state["last_injected_hash"] = content_hash
             state["last_injected_turn"] = effective_turns
             state["last_checkpoint_count"] = cp_count
@@ -300,13 +369,29 @@ def process_hook(
                 ledger_path=active_ledger,
                 mode=mode,
                 triggers=triggers,
-                line_count=line_count,
-                byte_count=byte_count,
+                metrics=metrics,
                 config=config,
                 inherited_from=state.get("inherited_from"),
                 is_forked=is_forked,
+                l2_cards=l2_cards,
+                matched_l2=include_l2,
             )
             # Omit systemMessage.metadata to avoid Antigravity ScrubInternalFields panic.
+            return {
+                "injectSteps": [
+                    {
+                        "systemMessage": {
+                            "systemMessage": msg,
+                        }
+                    }
+                ]
+            }
+
+        if matched_l2 and not already_hinted_this_prompt:
+            state["last_l2_hint_prompt_hash"] = prompt_hash
+            state["last_l2_hint_turn"] = effective_turns
+            save_state(state_dir, conversation_id, state)
+            msg = _build_l2_hint_only_injection(active_ledger, mode, matched_l2)
             return {
                 "injectSteps": [
                     {

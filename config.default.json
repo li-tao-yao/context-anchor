@@ -5,7 +5,11 @@
   "auto_detect_recheck_turns": 6,
   "reanchor_every_turns": 6,
   "max_lines": 120,
-  "max_bytes": 6144,
+  "max_chars": 4000,
+  "max_bytes": 12288,
+  "l2_index_max_entries": 40,
+  "l2_keyword_hints": true,
+  "l2_max_hint_matches": 3,
   "inherit_on_fork": true,
   "fork_max_age_hours": 48,
   "registry_max_entries": 200

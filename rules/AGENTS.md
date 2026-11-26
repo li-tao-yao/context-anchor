@@ -1,33 +1,32 @@
-# Context Anchor Working Memory Protocol
+# Context Anchor Working Memory Protocol (v0.3 — L1 + L2)
 
-This workspace/environment uses **Context Anchor** to prevent loss of confirmed decisions, constraints, and multi-turn state across long conversations, compactions, and `/btw` branches.
+This workspace/environment uses **Context Anchor** to preserve confirmed decisions, hard constraints, and structured domain context across long conversations, multi-version iterations, compactions, and `/btw` branches.
 
-## Storage Modes
-1. **Default — Session Ledger**: `<artifactDirectoryPath>/memory_ledger.md`
-   - Used for pure-text conversations, casual workspaces, and single-thread tasks without cluttering project directories.
-2. **Optional — Project-Pinned Ledger**: `<workspace>/.agents/context-anchor/memory_ledger.md`
-   - Takes precedence when present. Used only when the user asks to persist/pin working memory across separate conversations in the same project.
+## Two-Tier Architecture (L1 + L2)
+1. **L1 — Always-Anchored Working Ledger (`memory_ledger.md`)**:
+   - **Session mode (default)**: `<artifactDirectoryPath>/memory_ledger.md`
+   - **Project-pinned mode (optional)**: `<workspace>/.agents/context-anchor/memory_ledger.md` (takes precedence when present; ideal for ultra-long multi-session projects such as patents, textbooks, or large codebases).
+   - Keep L1 concise (`<= 120 lines`, `<= 4000 chars`, `<= 12288 bytes`) with 5 core sections:
+     1. `## 1. Goal & Scope` — core objective and boundaries.
+     2. `## 2. Hard Constraints` — **non-negotiable rules, tolerances, red lines, and style limits. Never demote high-risk hard constraints solely into L2.**
+     3. `## 3. Current Consensus` — latest active version baseline and confirmed decisions. **Overwrite obsolete values in place; never keep v1/v2 beside the active version.**
+     4. `## 4. Rejected & Pitfalls` — concise dead ends and reasons so they are not re-proposed.
+     5. `## 5. Active Files & Next` — key paths and immediate next step.
+   - When L2 cards exist, an auto-synced `## 6. L2 Memory Index (Read on Demand)` table sits at the bottom of `memory_ledger.md`.
+2. **L2 — On-Demand Topic Memory Cards (`memories/*.md` alongside `memory_ledger.md`)**:
+   - Use L2 when bulky structured knowledge would bloat L1 (e.g., figure label tables, terminology/symbol glossaries, per-chapter revision status, exclusion lists, API/schema specs, review/OA pitfalls).
+   - Each card uses lightweight YAML frontmatter (`title`, `trigger`, `keywords`, `updated`, `summary`) and is **overwritten in place** with the latest truth (keep superseded drafts in Git or Recycle Bin, never as duplicate memory cards).
+   - Manage L2 cards via `ledger_tool.py memory-save` / `memory-delete` / `sync-index` so the L1 index stays strictly in sync without manual drift.
 
-## Default Always-On Activation
-- **Every user conversation (Turn 1+)**: Context Anchor is enabled by default from Turn 1 (`auto_start: true`) — no `/context-anchor` command is needed. `PreInvocation` automatically initializes `<artifactDirectoryPath>/memory_ledger.md` (unless a project-pinned ledger already exists) and injects `[context-anchor | ...]`.
-- When `memory_ledger.md` is newly initialized (still contains template placeholders), silently replace the placeholders with the established facts of the current conversation before your final reply (skip editing in read-only `/btw` side questions unless the user asks to edit files).
-- To temporarily pause automatic injection for a conversation, use `/context-anchor pause` (or add `<!-- context-anchor: paused -->`).
-
-## Overwrite-in-Place Discipline
-Keep `memory_ledger.md` concise (`<= 120 lines` and `<= 6144 bytes`) with these 5 sections:
-1. `## 1. Goal & Scope` — core goal and boundaries.
-2. `## 2. Hard Constraints` — non-negotiable rules, tolerances, interfaces, style/budget limits.
-3. `## 3. Current Consensus` — latest confirmed decisions/specs. **Always overwrite obsolete values in place; never leave superseded v1/v2 values beside the active one.**
-4. `## 4. Rejected & Pitfalls` — explicitly rejected options and why, to prevent re-proposing dead ends.
-5. `## 5. Active Files & Next` — key file paths (if any) and immediate next step.
-
-Update the ledger **before** your final reply whenever the user confirms a change, adds a constraint, or rejects a proposal.
+## Default Always-On Activation & Keyword Recall
+- **Every user conversation (Turn 1+)**: Context Anchor auto-initializes `<artifactDirectoryPath>/memory_ledger.md` (`auto_start: true`) unless a project-pinned ledger exists. Replace template placeholders silently before your final reply (skip edits in read-only `/btw` side questions unless the user asks).
+- **L2 Recall Discipline**: Whenever `[context-anchor | ... triggers=...l2_hint]` reports `Matched L2 memory cards for this turn`, or the current task matches a `Read Before (Trigger)` row in the L1 index, call `read_file` on the relevant `memories/*.md` card **before** editing or answering.
+- To temporarily pause injection, use `/context-anchor pause` (or add `<!-- context-anchor: paused -->`).
 
 ## `/btw` Branch Isolation & Inheritance
-- Each `/btw` branch inherits an **isolated private copy** of its true parent conversation's substantive ledger (never mutating the parent's ledger, and never borrowing ledgers from sibling `/btw` branches).
-- If a `/btw` branch is discarded, the main conversation and future branches from main are completely unaffected. If a `/btw` branch is promoted to main, its isolated copy continues evolving and becomes the parent for subsequent forks.
-- When a project-pinned ledger is active during an exploratory `/btw` question, treat the shared project ledger as read-only unless the user explicitly asks to adopt the branch's changes.
-- Fallback: If a `<fork_notice>` names a parent artifact directory and the current conversation does not yet have `memory_ledger.md` (and the hook has not already inherited it), check if `<parent_artifact_dir>/memory_ledger.md` exists with substantive content and copy it to `<artifactDirectoryPath>/memory_ledger.md` before answering.
+- Each `/btw` branch inherits an **isolated private copy** of its true parent's substantive `memory_ledger.md` **and** `memories/*.md` directory (never mutating the parent or borrowing from sibling `/btw` branches).
+- When a project-pinned ledger is active during an exploratory `/btw` question, treat both the shared project ledger and its `memories/` cards as read-only unless the user explicitly asks to adopt the branch's changes.
+- Fallback: If a `<fork_notice>` names a parent artifact directory and the current conversation does not yet have `memory_ledger.md`, copy `<parent_artifact_dir>/memory_ledger.md` (and `memories/` if present) to `<artifactDirectoryPath>/` before answering.
 
 ## Privacy & Security
-Never store passwords, API keys, tokens, cookies, private keys, or sensitive credentials inside `memory_ledger.md`. Record only pointers (such as environment variable names or vault entries).
+Never store passwords, API keys, tokens, cookies, private keys, or sensitive credentials inside `memory_ledger.md` or `memories/*.md`. Record only pointers (such as environment variable names or vault entries).
